@@ -1,124 +1,92 @@
-# Monad flavored Hardhat starter
+# NFT Lending Smart Contract
 
-This project demonstrates a basic Hardhat use case optimized for Monad. It comes with a sample contract, a test for that contract, and a Hardhat Ignition module that deploys that contract.
+This project is a decentralized NFT lending platform where users can lend and borrow NFTs. The smart contract manages items, borrowing, escrow, and interest payments. It includes admin-controlled escrow resolution and view helper functions for easier data retrieval.
 
-## Project Structure
+---
 
-```
-hardhat-monad/
-├── contracts/             # Smart contract source files
-│   └── Lock.sol           # Sample time-locked wallet contract
-├── ignition/              # Hardhat Ignition deployment modules
-│   └── modules/
-│       └── Lock.ts        # Deployment configuration for Lock contract
-├── test/                  # Test files
-│   └── Lock.ts            # Tests for the Lock contract
-├── .env.example           # Example environment variables file
-├── hardhat.config.ts      # Hardhat configuration
-├── package.json           # Project dependencies
-└── tsconfig.json          # TypeScript configuration
-```
+## Features
 
-## Getting Started
+- **Create NFT items** with metadata and lending terms (value, interest per day, min/max lending days).  
+- **Borrow NFT items** with escrow payments.  
+- **Resolve escrow** as admin (Completed, Cancelled, OwnerWins, BorrowerWins, Dispute).  
+- **View helpers** for querying:  
+  - Items owned by a user  
+  - Borrowed items by a user  
+  - Available items for borrowing  
+  - Item status, escrow ID, and name  
 
-### Prerequisites
+- **Access control**: Only admin can resolve escrows. Only owner can update their items.
 
-- Node.js (v16+)
+---
 
-### Installation
+## Prerequisites
 
-1. Clone this repository:
-   ```bash
-   git clone https://github.com/portdeveloper/hardhat-monad.git
-   cd hardhat-monad
-   ```
+- Node.js v18+  
+- npm or yarn  
+- Hardhat v2+  
+- Foundry (optional, for Solidity testing)  
 
-2. Install dependencies:
-   ```bash
-   npm install
-   ```
+---
 
-3. Create a `.env` file based on `.env.example`:
-   ```bash
-   cp .env.example .env
-   ```
+## Installation
 
-4. Add your private key to the `.env` file:
-   ```
-   PRIVATE_KEY=your_private_key_here
-   ```
-   ⚠️ **IMPORTANT**: Never commit your `.env` file or expose your private key.
-
-## Testing
-
-Run tests with Hardhat:
+1. Clone the repository:
 
 ```bash
+git clone <your-repo-url>
+cd <your-repo-folder>
+Install npm dependencies:
+
+bash
+Copy code
+npm install
+Install Hardhat if not installed globally:
+
+bash
+Copy code
+npm install --save-dev hardhat
+Install Foundry (for testing with forge-std):
+
+bash
+Copy code
+curl -L https://foundry.paradigm.xyz | bash
+foundryup
+Setup
+Create a .env file in the project root:
+
+bash
+Copy code
+touch .env
+Add environment variables if needed (e.g., for network URL or private keys):
+
+env
+Copy code
+PRIVATE_KEY=your_private_key_here
+RPC_URL=http://127.0.0.1:8545
+Note: For local Hardhat testing, .env is optional.
+
+Compile Smart Contracts
+bash
+Copy code
+npx hardhat compile
+This will compile all Solidity contracts under contracts/.
+
+Running Tests
+The project uses Hardhat + Foundry style tests (forge-std/Test.sol):
+
+bash
+Copy code
 npx hardhat test
-```
+This command will:
 
-## How to deploy your contract
+Launch a local Hardhat network
 
-This project uses Hardhat Ignition for deployments, which makes it easy to manage complex deployment procedures.
+Deploy the NFTLending contract
 
-### Local Deployment (Hardhat Network)
+Run all Solidity test functions in test/NFTLendingTest.sol
 
-Run hardhat node by running:
+Show the results in the console
 
-```bash
-npx hardhat node
-```
+License
 
-To deploy the contract to the local hardhat node, run the following command:
-
-```bash
-npx hardhat ignition deploy ignition/modules/Lock.ts
-```
-
-### Monad Testnet Deployment
-
-```bash
-npx hardhat ignition deploy ignition/modules/Lock.ts --network monadTestnet
-```
-
-To redeploy the same code to a different address use the command below:
-
-```bash
-npx hardhat ignition deploy ignition/modules/Lock.ts --network monadTestnet --reset
-```
-
-You can customize deployment parameters:
-
-```bash
-npx hardhat ignition deploy ignition/modules/Lock.ts --network monadTestnet --parameters '{"unlockTime": 1893456000, "lockedAmount": "1000000000000000"}'
-```
-
-## How to verify your contract
-
-This project is configured to use Sourcify for contract verification on Monad. After deployment, you can verify your contract with:
-
-```bash
-npx hardhat verify <contract_address> --network monadTestnet
-```
-
-Once verified, you can view your contract on the [Monad Explorer](https://testnet.monadexplorer.com).
-
-## Customizing the Lock Contract
-
-The sample Lock contract is a simple time-locked wallet that:
-- Accepts ETH during deployment
-- Locks funds until a specified timestamp
-- Allows only the owner to withdraw once the time has passed
-
-You can modify the unlock time in `ignition/modules/Lock.ts` or pass it as a parameter during deployment.
-
-## Got questions?
-
-- Refer to [docs.monad.xyz](https://docs.monad.xyz) for Monad-specific documentation
-- Visit [Hardhat Documentation](https://hardhat.org/docs) for Hardhat help
-- Check [Hardhat Ignition Guide](https://hardhat.org/ignition/docs/getting-started) for deployment assistance
-
-## License
-
-This project is licensed under the MIT License.
-
+MIT License

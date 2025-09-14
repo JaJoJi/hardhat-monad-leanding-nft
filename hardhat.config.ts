@@ -1,35 +1,41 @@
 import type { HardhatUserConfig } from "hardhat/config";
-import "@nomicfoundation/hardhat-toolbox-viem";
-import "@nomicfoundation/hardhat-ignition-viem";
-import "dotenv/config";
 
-const PRIVATE_KEY = process.env.PRIVATE_KEY || "";
+import hardhatToolboxMochaEthersPlugin from "@nomicfoundation/hardhat-toolbox-mocha-ethers";
+import { configVariable } from "hardhat/config";
 
 const config: HardhatUserConfig = {
+  plugins: [hardhatToolboxMochaEthersPlugin],
   solidity: {
-    version: "0.8.28",
-    settings: {
-      metadata: {
-        bytecodeHash: "none", // disable ipfs
-        useLiteralContent: true, // use source code
+    profiles: {
+      default: {
+        version: "0.8.28",
+      },
+      production: {
+        version: "0.8.28",
+        settings: {
+          optimizer: {
+            enabled: true,
+            runs: 200,
+          },
+        },
       },
     },
   },
   networks: {
-    monadTestnet: {
-      url: "https://testnet-rpc.monad.xyz",
-      accounts: [PRIVATE_KEY],
-      chainId: 10143,
+    hardhatMainnet: {
+      type: "edr-simulated",
+      chainType: "l1",
     },
-  },
-  sourcify: {
-    enabled: true,
-    apiUrl: "https://sourcify-api-monad.blockvision.org",
-    browserUrl: "https://testnet.monadexplorer.com",
-  },
-  // To avoid errors from Etherscan
-  etherscan: {
-    enabled: false,
+    hardhatOp: {
+      type: "edr-simulated",
+      chainType: "op",
+    },
+    sepolia: {
+      type: "http",
+      chainType: "l1",
+      url: configVariable("SEPOLIA_RPC_URL"),
+      accounts: [configVariable("SEPOLIA_PRIVATE_KEY")],
+    },
   },
 };
 
