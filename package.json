@@ -10,6 +10,7 @@
     "@types/mocha": "^10.0.10",
     "@types/node": "^22.18.3",
     "chai": "^5.3.3",
+    "dotenv": "^17.2.2",
     "ethers": "^6.15.0",
     "forge-std": "github:foundry-rs/forge-std#v1.9.4",
     "hardhat": "^3.0.6",
