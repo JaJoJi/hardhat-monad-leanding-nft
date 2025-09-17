@@ -26,10 +26,21 @@ contract NFTLendingTest is Test {
         string memory name = lending.getItemName(0);
         assertEq(name, "Sword");
 
-        // Check owner items mapping
         uint256[] memory itemsOfUser1 = lending.getOwnerItems(user1);
         assertEq(itemsOfUser1.length, 1);
         assertEq(itemsOfUser1[0], 0);
+    }
+
+    function testOwnerItemsMultiple() public {
+        vm.startPrank(user1);
+        lending.createItem("Item1", false, 1 ether, 0.01 ether, 1, 10, "url1");
+        lending.createItem("Item2", false, 1 ether, 0.01 ether, 1, 10, "url2");
+        vm.stopPrank();
+
+        uint256[] memory items = lending.getOwnerItems(user1);
+        assertEq(items.length, 2);
+        assertEq(items[0], 0);
+        assertEq(items[1], 1);
     }
 
     // ------------------------------
@@ -45,11 +56,11 @@ contract NFTLendingTest is Test {
         vm.prank(user2);
         lending.borrowItem{value: totalAmount}(0, 5);
 
-        NFTLending.EscrowStatus status = lending.getEscrowStatus(0);
-        assertEq(uint256(status), uint256(NFTLending.EscrowStatus.Pending));
+        uint8 status = lending.getEscrowStatus(0);
+        assertEq(status, 0); // ESCROW_PENDING
 
-        NFTLending.Status itemStatus = lending.getItemStatus(0);
-        assertEq(uint256(itemStatus), uint256(NFTLending.Status.Borrowed));
+        uint8 itemStatus = lending.getItemStatus(0);
+        assertEq(itemStatus, 1); // STATUS_BORROWED
     }
 
     function testCannotBorrowIfNotIdle() public {
@@ -61,13 +72,37 @@ contract NFTLendingTest is Test {
         vm.prank(user2);
         lending.borrowItem{value: totalAmount}(0, 3);
 
-        // user3 attempts to borrow → should fail
         vm.deal(user3, totalAmount);
         vm.prank(user3);
-        vm.expectRevert();
+        vm.expectRevert(NFTLending.ItemNotAvailable.selector);
         lending.borrowItem{value: totalAmount}(0, 2);
     }
 
+    function testBorrowPrivateItemFails() public {
+        vm.prank(user1);
+        lending.createItem("SecretHammer", true, 1 ether, 0.01 ether, 1, 10, "url_hammer");
+
+        uint256 totalAmount = 1 ether + 0.01 ether * 2;
+        vm.deal(user2, totalAmount);
+
+        vm.prank(user2);
+        vm.expectRevert(NFTLending.ItemIsPrivate.selector);
+        lending.borrowItem{value: totalAmount}(0, 2);
+    }
+
+    function testBorrowFailsIfInsufficientValue() public {
+        vm.prank(user1);
+        lending.createItem("Bow", false, 1 ether, 0.01 ether, 1, 10, "url_bow");
+
+        vm.deal(user2, 1 ether);
+        vm.prank(user2);
+        vm.expectRevert(NFTLending.IncorrectEscrowAmount.selector);
+        lending.borrowItem{value: 1 ether}(0, 5);
+    }
+
+    // ------------------------------
+    // Update item tests
+    // ------------------------------
     function testCannotEditItemWhileRenting() public {
         vm.prank(user1);
         lending.createItem("Axe", false, 1 ether, 0.01 ether, 1, 10, "url_axe");
@@ -77,10 +112,20 @@ contract NFTLendingTest is Test {
         vm.prank(user2);
         lending.borrowItem{value: totalAmount}(0, 2);
 
-        // owner tries to update while borrowed → should fail
         vm.prank(user1);
-        vm.expectRevert();
+        vm.expectRevert(NFTLending.CannotUpdateBorrowed.selector);
         lending.updateItem(0, "Axe+", true, 2 ether, 0.02 ether, 1, 10, "url_axe2");
+    }
+
+    function testUpdateItemSuccessWhenIdle() public {
+        vm.prank(user1);
+        lending.createItem("Axe", false, 1 ether, 0.01 ether, 1, 10, "url_axe");
+
+        vm.prank(user1);
+        lending.updateItem(0, "Axe+", false, 2 ether, 0.02 ether, 1, 10, "url_axe2");
+
+        string memory name = lending.getItemName(0);
+        assertEq(name, "Axe+");
     }
 
     // ------------------------------
@@ -97,15 +142,14 @@ contract NFTLendingTest is Test {
 
         uint256 escrowId = lending.getItemEscrowId(0);
 
-        // admin resolves escrow
         vm.prank(admin);
-        lending.resolveEscrow(escrowId, NFTLending.EscrowStatus.Completed);
+        lending.resolveEscrow(escrowId, 1); // ESCROW_COMPLETED
 
-        NFTLending.EscrowStatus newStatus = lending.getEscrowStatus(escrowId);
-        assertEq(uint256(newStatus), uint256(NFTLending.EscrowStatus.Completed));
+        uint8 newStatus = lending.getEscrowStatus(escrowId);
+        assertEq(newStatus, 1);
 
-        NFTLending.Status itemStatus = lending.getItemStatus(0);
-        assertEq(uint256(itemStatus), uint256(NFTLending.Status.Idle));
+        uint8 itemStatus = lending.getItemStatus(0);
+        assertEq(itemStatus, 0); // STATUS_IDLE
     }
 
     function testCannotResolveEscrowNonAdmin() public {
@@ -120,8 +164,8 @@ contract NFTLendingTest is Test {
         uint256 escrowId = lending.getItemEscrowId(0);
 
         vm.prank(user2);
-        vm.expectRevert();
-        lending.resolveEscrow(escrowId, NFTLending.EscrowStatus.Completed);
+        vm.expectRevert(NFTLending.OnlyAdmin.selector);
+        lending.resolveEscrow(escrowId, 1);
     }
 
     function testCancelEscrow() public {
@@ -135,72 +179,11 @@ contract NFTLendingTest is Test {
 
         uint256 escrowId = lending.getItemEscrowId(0);
 
-        // admin cancels escrow
         vm.prank(admin);
-        lending.resolveEscrow(escrowId, NFTLending.EscrowStatus.Cancelled);
+        lending.resolveEscrow(escrowId, 2); // ESCROW_CANCELLED
 
-        NFTLending.EscrowStatus status = lending.getEscrowStatus(escrowId);
-        assertEq(uint256(status), uint256(NFTLending.EscrowStatus.Cancelled));
-    }
-
-    // ------------------------------
-    // View helper tests
-    // ------------------------------
-    function testGetAvailableItems() public {
-        vm.prank(user1);
-        lending.createItem("Sword", false, 1 ether, 0.01 ether, 1, 10, "url_sword");
-
-        vm.prank(user1);
-        lending.createItem("PrivateShield", true, 1 ether, 0.01 ether, 1, 10, "url_shield");
-
-        uint256[] memory available = lending.getAvailableItems();
-        assertEq(available.length, 1);
-        assertEq(available[0], 0); // only public idle item
-    }
-
-    function testBorrowFailsIfInsufficientValue() public {
-        vm.prank(user1);
-        lending.createItem("Bow", false, 1 ether, 0.01 ether, 1, 10, "url_bow");
-
-        vm.deal(user2, 1 ether); // insufficient
-        vm.prank(user2);
-        vm.expectRevert();
-        lending.borrowItem{value: 1 ether}(0, 5);
-    }
-
-    function testUpdateItemSuccessWhenIdle() public {
-        vm.prank(user1);
-        lending.createItem("Axe", false, 1 ether, 0.01 ether, 1, 10, "url_axe");
-
-        vm.prank(user1);
-        lending.updateItem(0, "Axe+", false, 2 ether, 0.02 ether, 1, 10, "url_axe2");
-
-        string memory name = lending.getItemName(0);
-        assertEq(name, "Axe+");
-    }
-
-    function testBorrowPrivateItemFails() public {
-        vm.prank(user1);
-        lending.createItem("SecretHammer", true, 1 ether, 0.01 ether, 1, 10, "url_hammer");
-
-        uint256 totalAmount = 1 ether + 0.01 ether * 2;
-        vm.deal(user2, totalAmount);
-
-        vm.prank(user2);
-        vm.expectRevert();
-        lending.borrowItem{value: totalAmount}(0, 2);
-    }
-
-    function testOwnerItemsMultiple() public {
-        vm.startPrank(user1);
-        lending.createItem("Item1", false, 1 ether, 0.01 ether, 1, 10, "url1");
-        lending.createItem("Item2", false, 1 ether, 0.01 ether, 1, 10, "url2");
-        vm.stopPrank();
-
-        uint256[] memory items = lending.getOwnerItems(user1);
-        assertEq(items.length, 2);
-        assertEq(items[0], 0);
-        assertEq(items[1], 1);
+        uint8 status = lending.getEscrowStatus(escrowId);
+        assertEq(status, 2);
     }
 
     function testResolveEscrowTransfersFundsToOwner() public {
@@ -217,16 +200,28 @@ contract NFTLendingTest is Test {
         uint256 balanceBefore = user1.balance;
 
         vm.prank(admin);
-        lending.resolveEscrow(escrowId, NFTLending.EscrowStatus.Completed);
+        lending.resolveEscrow(escrowId, 1); // ESCROW_COMPLETED
 
         uint256 balanceAfter = user1.balance;
         assertGt(balanceAfter, balanceBefore, "Owner should receive funds");
     }
 
+    // ------------------------------
+    // View helper tests
+    // ------------------------------
+    function testGetAvailableItems() public {
+        vm.prank(user1);
+        lending.createItem("Sword", false, 1 ether, 0.01 ether, 1, 10, "url_sword");
+
+        vm.prank(user1);
+        lending.createItem("PrivateShield", true, 1 ether, 0.01 ether, 1, 10, "url_shield");
+
+        uint256[] memory available = lending.getAvailableItems();
+        assertEq(available.length, 1);
+        assertEq(available[0], 0);
+    }
+
     function testViewHelpers() public {
-        // ------------------------------
-        // Create multiple items
-        // ------------------------------
         vm.prank(user1);
         lending.createItem("Item1", false, 1 ether, 0.01 ether, 1, 5, "url1");
         vm.prank(user1);
@@ -234,56 +229,35 @@ contract NFTLendingTest is Test {
         vm.prank(user1);
         lending.createItem("Item3", false, 1.5 ether, 0.015 ether, 1, 5, "url3");
 
-        // ------------------------------
-        // user2 borrows Item1
-        // ------------------------------
         uint256 totalAmount1 = 1 ether + 0.01 ether * 3;
         vm.deal(user2, totalAmount1);
         vm.prank(user2);
         lending.borrowItem{value: totalAmount1}(0, 3);
 
-        // ------------------------------
-        // Check getBorrowerItems
-        // ------------------------------
         uint256[] memory borrowedByUser2 = lending.getBorrowerItems(user2);
         assertEq(borrowedByUser2.length, 1);
         assertEq(borrowedByUser2[0], 0);
 
-        // ------------------------------
-        // Check getAvailableItems
-        // ------------------------------
         uint256[] memory available = lending.getAvailableItems();
         assertEq(available.length, 1);
         assertEq(available[0], 2);
 
-        // ------------------------------
-        // Check getOwnerItems
-        // ------------------------------
         uint256[] memory ownerItems = lending.getOwnerItems(user1);
         assertEq(ownerItems.length, 3);
         assertEq(ownerItems[0], 0);
         assertEq(ownerItems[1], 1);
         assertEq(ownerItems[2], 2);
 
-        // ------------------------------
-        // Check item names
-        // ------------------------------
         assertEq(lending.getItemName(0), "Item1");
         assertEq(lending.getItemName(1), "Item2");
         assertEq(lending.getItemName(2), "Item3");
 
-        // ------------------------------
-        // Check item statuses
-        // ------------------------------
-        assertEq(uint256(lending.getItemStatus(0)), uint256(NFTLending.Status.Borrowed));
-        assertEq(uint256(lending.getItemStatus(1)), uint256(NFTLending.Status.Idle));
-        assertEq(uint256(lending.getItemStatus(2)), uint256(NFTLending.Status.Idle));
+        assertEq(lending.getItemStatus(0), 1); // borrowed
+        assertEq(lending.getItemStatus(1), 0);
+        assertEq(lending.getItemStatus(2), 0);
 
-        // ------------------------------
-        // Check item escrow IDs
-        // ------------------------------
-        assertEq(lending.getItemEscrowId(0), 0); // borrowed
-        assertEq(lending.getItemEscrowId(1), 0); // not borrowed
-        assertEq(lending.getItemEscrowId(2), 0); // not borrowed
+        assertEq(lending.getItemEscrowId(0), 0);
+        assertEq(lending.getItemEscrowId(1), 0);
+        assertEq(lending.getItemEscrowId(2), 0);
     }
 }

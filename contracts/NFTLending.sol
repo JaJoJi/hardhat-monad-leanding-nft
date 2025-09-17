@@ -3,22 +3,44 @@ pragma solidity ^0.8.28;
 
 contract NFTLending {
     // --------------------------------------
-    // Enums & Structs
+    // Status codes (replacing enums to save gas)
     // --------------------------------------
-    enum Status { Idle, Borrowed }
-    enum EscrowStatus { Pending, Completed, Cancelled, Dispute, OwnerWins, BorrowerWins }
+    uint8 constant STATUS_IDLE = 0;
+    uint8 constant STATUS_BORROWED = 1;
 
+    uint8 constant ESCROW_PENDING = 0;
+    uint8 constant ESCROW_COMPLETED = 1;
+    uint8 constant ESCROW_CANCELLED = 2;
+    uint8 constant ESCROW_DISPUTE = 3;
+    uint8 constant ESCROW_OWNER_WINS = 4;
+    uint8 constant ESCROW_BORROWER_WINS = 5;
+
+    // --------------------------------------
+    // Custom errors
+    // --------------------------------------
+    error OnlyAdmin();
+    error NotOwner();
+    error CannotUpdateBorrowed();
+    error ItemNotAvailable();
+    error OwnerCannotBorrow();
+    error ItemIsPrivate();
+    error InvalidDuration();
+    error IncorrectEscrowAmount();
+    error CannotResolveEscrow();
+
+    // --------------------------------------
+    // Structs optimized for storage
+    // --------------------------------------
     struct NFTItem {
-        string name;
-        bool isPrivate;
-        Status status;
-        uint256 value;           
-        uint256 interestPerDay; 
+        bytes32 name;       // แทน string
+        uint8 flags;        // bit0 = status, bit1 = isPrivate
+        uint256 value;
+        uint256 interestPerDay;
         uint256 minDays;
         uint256 maxDays;
         address borrower;
         uint256 escrowId;
-        string imageUrl;
+        bytes32 imageHash;  // แทน string imageUrl
         address owner;
     }
 
@@ -27,8 +49,8 @@ contract NFTLending {
         address borrower;
         uint256 startTime;
         uint256 durationDays;
-        uint256 amount;          
-        EscrowStatus status;
+        uint256 amount;
+        uint8 status;      // uint8 แทน EscrowStatus
     }
 
     // --------------------------------------
@@ -49,23 +71,43 @@ contract NFTLending {
     event ItemCreated(uint256 indexed itemId, address indexed owner);
     event ItemUpdated(uint256 indexed itemId);
     event ItemBorrowed(uint256 indexed itemId, address indexed borrower, uint256 escrowId);
-    event EscrowResolved(uint256 indexed escrowId, EscrowStatus status);
+    event EscrowResolved(uint256 indexed escrowId, uint8 status);
 
     // --------------------------------------
     // Modifiers
     // --------------------------------------
     modifier onlyAdmin() {
-        require(msg.sender == admin, "Only admin");
+        if(msg.sender != admin) revert OnlyAdmin();
         _;
     }
 
     modifier onlyOwner(uint256 _itemId) {
-        require(items[_itemId].owner == msg.sender, "Not owner");
+        if(items[_itemId].owner != msg.sender) revert NotOwner();
         _;
     }
 
     constructor() {
         admin = msg.sender;
+    }
+
+    // --------------------------------------
+    // Internal helpers for bit-packed flags
+    // --------------------------------------
+    function _getStatus(uint8 flags) internal pure returns(uint8) {
+        return flags & 0x1; // bit0
+    }
+
+    function _getIsPrivate(uint8 flags) internal pure returns(bool) {
+        return (flags & 0x2) != 0; // bit1
+    }
+
+    function _setStatus(uint8 flags, uint8 status) internal pure returns(uint8) {
+        return (flags & 0xFE) | (status & 0x1); // clear bit0 then set
+    }
+
+    function _setIsPrivate(uint8 flags, bool isPrivate) internal pure returns(uint8) {
+        if(isPrivate) return flags | 0x2;
+        else return flags & 0xFD;
     }
 
     // --------------------------------------
@@ -83,16 +125,15 @@ contract NFTLending {
         uint256 itemId = nextItemId++;
 
         items[itemId] = NFTItem({
-            name: _name,
-            isPrivate: _isPrivate,
-            status: Status.Idle,
+            name: bytes32(bytes(_name)),
+            flags: _setIsPrivate(STATUS_IDLE, _isPrivate),
             value: _value,
             interestPerDay: _interestPerDay,
             minDays: _minDays,
             maxDays: _maxDays,
             borrower: address(0),
             escrowId: 0,
-            imageUrl: _imageUrl,
+            imageHash: bytes32(bytes(_imageUrl)),
             owner: msg.sender
         });
 
@@ -112,15 +153,15 @@ contract NFTLending {
         string memory _imageUrl
     ) external onlyOwner(_itemId) {
         NFTItem storage item = items[_itemId];
-        require(item.status == Status.Idle, "Cannot update borrowed item");
+        if(_getStatus(item.flags) != STATUS_IDLE) revert CannotUpdateBorrowed();
 
-        item.name = _name;
-        item.isPrivate = _isPrivate;
+        item.name = bytes32(bytes(_name));
+        item.flags = _setIsPrivate(_setStatus(item.flags, STATUS_IDLE), _isPrivate);
         item.value = _value;
         item.interestPerDay = _interestPerDay;
         item.minDays = _minDays;
         item.maxDays = _maxDays;
-        item.imageUrl = _imageUrl;
+        item.imageHash = bytes32(bytes(_imageUrl));
 
         emit ItemUpdated(_itemId);
     }
@@ -130,13 +171,13 @@ contract NFTLending {
     // --------------------------------------
     function borrowItem(uint256 _itemId, uint256 _days) external payable {
         NFTItem storage item = items[_itemId];
-        require(item.status == Status.Idle, "Item not available");
-        require(msg.sender != item.owner, "Owner cannot borrow");
-        require(!item.isPrivate, "Item is private");
-        require(_days >= item.minDays && _days <= item.maxDays, "Invalid duration");
+        if(_getStatus(item.flags) != STATUS_IDLE) revert ItemNotAvailable();
+        if(msg.sender == item.owner) revert OwnerCannotBorrow();
+        if(_getIsPrivate(item.flags)) revert ItemIsPrivate();
+        if(_days < item.minDays || _days > item.maxDays) revert InvalidDuration();
 
         uint256 totalAmount = item.value + (item.interestPerDay * _days);
-        require(msg.value == totalAmount, "Incorrect escrow amount");
+        if(msg.value != totalAmount) revert IncorrectEscrowAmount();
 
         uint256 escrowId = nextEscrowId++;
         escrows[escrowId] = Escrow({
@@ -145,10 +186,10 @@ contract NFTLending {
             startTime: block.timestamp,
             durationDays: _days,
             amount: msg.value,
-            status: EscrowStatus.Pending
+            status: ESCROW_PENDING
         });
 
-        item.status = Status.Borrowed;
+        item.flags = _setStatus(item.flags, STATUS_BORROWED);
         item.borrower = msg.sender;
         item.escrowId = escrowId;
 
@@ -158,25 +199,20 @@ contract NFTLending {
     // --------------------------------------
     // Admin escrow resolution
     // --------------------------------------
-    function resolveEscrow(uint256 _escrowId, EscrowStatus result) external onlyAdmin {
+    function resolveEscrow(uint256 _escrowId, uint8 result) external onlyAdmin {
         Escrow storage escrow = escrows[_escrowId];
         NFTItem storage item = items[escrow.itemId];
 
-        require(
-            escrow.status == EscrowStatus.Pending || escrow.status == EscrowStatus.Dispute,
-            "Cannot resolve"
-        );
+        if(escrow.status != ESCROW_PENDING && escrow.status != ESCROW_DISPUTE) revert CannotResolveEscrow();
 
-        if(result == EscrowStatus.Completed || result == EscrowStatus.OwnerWins) {
+        if(result == ESCROW_COMPLETED || result == ESCROW_OWNER_WINS) {
             payable(item.owner).transfer(escrow.amount);
-        } else if(result == EscrowStatus.BorrowerWins) {
-            payable(escrow.borrower).transfer(escrow.amount);
-        } else if(result == EscrowStatus.Cancelled) {
+        } else if(result == ESCROW_BORROWER_WINS || result == ESCROW_CANCELLED) {
             payable(escrow.borrower).transfer(escrow.amount);
         }
 
         escrow.status = result;
-        item.status = Status.Idle;
+        item.flags = _setStatus(item.flags, STATUS_IDLE);
         item.borrower = address(0);
         item.escrowId = 0;
 
@@ -194,63 +230,23 @@ contract NFTLending {
         return ownerItems[_owner];
     }
 
-    function getEscrowStatus(uint256 _escrowId) external view returns(EscrowStatus) {
+    function getItemStatus(uint256 _itemId) external view returns(uint8) {
+        return _getStatus(items[_itemId].flags);
+    }
+
+    function getItemIsPrivate(uint256 _itemId) external view returns(bool) {
+        return _getIsPrivate(items[_itemId].flags);
+    }
+
+    function getEscrowStatus(uint256 _escrowId) external view returns(uint8) {
         return escrows[_escrowId].status;
     }
 
-    function getItemName(uint256 _itemId) external view returns (string memory) {
-        return items[_itemId].name;
+    function getItemName(uint256 _itemId) external view returns(string memory) {
+        return string(abi.encodePacked(items[_itemId].name));
     }
 
-    function getItemEscrowId(uint256 _itemId) external view returns(uint256) {
-        return items[_itemId].escrowId;
-    }
-
-    function getItemStatus(uint256 _itemId) external view returns(Status) {
-        return items[_itemId].status;
-    }
-
-    // --------------------------------------
-    // Additional view helpers
-    // --------------------------------------
-
-    /// @notice Return items currently borrowed by a user
-    function getBorrowerItems(address _borrower) external view returns(uint256[] memory) {
-        uint256 count = 0;
-        for (uint256 i = 0; i < nextItemId; i++) {
-            if (items[i].borrower == _borrower && items[i].status == Status.Borrowed) {
-                count++;
-            }
-        }
-
-        uint256[] memory borrowed = new uint256[](count);
-        uint256 index = 0;
-        for (uint256 i = 0; i < nextItemId; i++) {
-            if (items[i].borrower == _borrower && items[i].status == Status.Borrowed) {
-                borrowed[index] = i;
-                index++;
-            }
-        }
-        return borrowed;
-    }
-
-    /// @notice Return items available for borrowing (public and idle)
-    function getAvailableItems() external view returns(uint256[] memory) {
-        uint256 count = 0;
-        for (uint256 i = 0; i < nextItemId; i++) {
-            if (!items[i].isPrivate && items[i].status == Status.Idle) {
-                count++;
-            }
-        }
-
-        uint256[] memory available = new uint256[](count);
-        uint256 index = 0;
-        for (uint256 i = 0; i < nextItemId; i++) {
-            if (!items[i].isPrivate && items[i].status == Status.Idle) {
-                available[index] = i;
-                index++;
-            }
-        }
-        return available;
+    function getItemImage(uint256 _itemId) external view returns(string memory) {
+        return string(abi.encodePacked(items[_itemId].imageHash));
     }
 }
